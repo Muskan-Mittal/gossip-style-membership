@@ -223,21 +223,13 @@ bool MP1Node::recvCallBack(void *env, char *data, int size ) {
 	 * Your code goes here
 	 */
     MessageHdr *msg = (MessageHdr *) data;
-    Address *addr = (Address *)(msg+1);
-    
-    size -= sizeof(MessageHdr) + sizeof(Address) + 1;
+    Address *addr = (Address *)(msg+1);    
     data += sizeof(MessageHdr) + sizeof(Address) + 1;
 
     int id = *((int*)addr->addr);
     short port = *((short*)&(addr->addr[4]));
 
     long *heartbeat = (long*)data;
-    // memcpy(&id, &addr->addr[0], sizeof(int));
-    // memcpy(&port, &addr->addr[4], sizeof(short));
-    // long heartbeat=0;
-    // memcpy(&heartbeat, ((msg+1) + 1 + sizeof(addr)), sizeof(long));
-
-
 
     if(msg->msgType == JOINREQ)
     {
@@ -248,10 +240,7 @@ bool MP1Node::recvCallBack(void *env, char *data, int size ) {
     {
         memberNode->inGroup = true;
         onHeartbeat(addr, *heartbeat);
-        // stringstream msg;
-        // msg << "JOINREP from " <<  address;
-        // msg << " data " << to_string(heartbeat);
-        // log->LOG(&memberNode->addr, msg.str().c_str());
+        
     }else if(msg->msgType == GOSSIP)
     {
         onHeartbeat(addr, *heartbeat);
@@ -335,11 +324,6 @@ void MP1Node::initMemberListTable(Member *memberNode) {
     int id = *(int*)(&memberNode->addr.addr);
     short port = *(short*)(&memberNode->addr.addr[4]);
 
-    // int id;
-    // short port;
-    // memcpy(&id, &memberNode->addr.addr[0], sizeof(int));
-    // memcpy(&port, &memberNode->addr.addr[4], sizeof(short));
-
     MemberListEntry entry = MemberListEntry(id, port);
     entry.settimestamp(par->getcurrtime());
     entry.setheartbeat(memberNode->heartbeat);
@@ -368,10 +352,6 @@ void MP1Node::addMemberToList(Address *addr, int id, short port, long heartbeat)
     memcpy((char *)(msg+1), &memberNode->addr, sizeof(memberNode->addr));
     memcpy((char *)(msg+1) + 1 + sizeof(memberNode->addr), &memberNode->heartbeat, sizeof(long));
     emulNet->ENsend(&memberNode->addr, addr, (char *)msg, msgsize);
-
-    // stringstream ss;
-    // ss<< "Sending JOINREP to " << addr->getAddress() <<" heartbeat "<<memberNode->heartbeat;
-    // log->LOG(&memberNode->addr, ss.str().c_str());
     free(msg);
 
 }
@@ -411,13 +391,13 @@ void MP1Node::gossip(Address *updatedNodeAddr, long updatedNodeHeartbeat)
     int k=30;
     double beta = (double) k/ (double) memberNode->memberList.size();
 
-    size_t msgsize = sizeof(MessageHdr) + sizeof(updatedNodeAddr->addr) + sizeof(long) + 1;
+    size_t msgsize = sizeof(MessageHdr) + sizeof(*updatedNodeAddr) + sizeof(long) + 1;
     MessageHdr *msg = (MessageHdr *) malloc(msgsize * sizeof(char));
     
     // create GOSSIP message: format of data is {struct Address myaddr}
     msg->msgType = GOSSIP;
-    memcpy((char *)(msg+1), updatedNodeAddr->addr, sizeof(updatedNodeAddr->addr));
-    memcpy((char *)(msg+1) + 1 + sizeof(updatedNodeAddr->addr), &updatedNodeHeartbeat, sizeof(long));
+    memcpy((char *)(msg+1), updatedNodeAddr->addr, sizeof(*updatedNodeAddr));
+    memcpy((char *)(msg+1) + 1 + sizeof(*updatedNodeAddr), &updatedNodeHeartbeat, sizeof(long));
     
     for(vector<MemberListEntry>::iterator it = memberNode->memberList.begin(); it != memberNode->memberList.end(); it++)
     {
