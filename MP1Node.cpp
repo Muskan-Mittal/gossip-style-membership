@@ -225,30 +225,36 @@ bool MP1Node::recvCallBack(void *env, char *data, int size ) {
     MessageHdr *msg = (MessageHdr *) data;
     Address *addr = (Address *)(msg+1);
     
-    int id = 0;
-    short port;
-    string address = addr->getAddress();
-    memcpy(&id, &address[0], sizeof(int));
-    memcpy(&port, &addr[5], sizeof(short));
-    long heartbeat=0;
-    memcpy(&heartbeat, ((msg+1) + 1 + sizeof(addr)), sizeof(long));
+    size -= sizeof(MessageHdr) + sizeof(Address) + 1;
+    data += sizeof(MessageHdr) + sizeof(Address) + 1;
+
+    int id = *((int*)addr->addr);
+    short port = *((short*)&(addr->addr[4]));
+
+    long *heartbeat = (long*)data;
+    // memcpy(&id, &addr->addr[0], sizeof(int));
+    // memcpy(&port, &addr->addr[4], sizeof(short));
+    // long heartbeat=0;
+    // memcpy(&heartbeat, ((msg+1) + 1 + sizeof(addr)), sizeof(long));
+
+
 
     if(msg->msgType == JOINREQ)
     {
-        onHeartbeat(addr, heartbeat);
-        addMemberToList(addr, id, port, heartbeat);
+        addMemberToList(addr, id, port, *heartbeat);
+        onHeartbeat(addr, *heartbeat);
     }
     else if(msg->msgType == JOINREP)
     {
-        onHeartbeat(addr, heartbeat);
         memberNode->inGroup = true;
+        onHeartbeat(addr, *heartbeat);
         // stringstream msg;
         // msg << "JOINREP from " <<  address;
         // msg << " data " << to_string(heartbeat);
         // log->LOG(&memberNode->addr, msg.str().c_str());
     }else if(msg->msgType == GOSSIP)
     {
-        onHeartbeat(addr, heartbeat);
+        onHeartbeat(addr, *heartbeat);
     }
     else
     {
@@ -269,22 +275,24 @@ void MP1Node::nodeLoopOps() {
 	/*
 	 * Your code goes here
 	 */
-    for(vector<MemberListEntry>::iterator it = memberNode->memberList.begin(); it != memberNode->memberList.end();)
+    for(vector<MemberListEntry>::iterator it = memberNode->memberList.begin(); it != memberNode->memberList.end();it++)
     {
         if(par->getcurrtime() - it->timestamp > TREMOVE)
         {
             Address curr_addr = getAddressFromMemberElement(&(*it)); 
-            // stringstream ss;
-            // ss << "Timing out " << curr_addr.getAddress();
-            // log->LOG(&memberNode->addr, ss.str().c_str());
-            // ss.str("");
+            if(curr_addr == memberNode->addr)
+                continue;
 
-            it = memberNode->memberList.erase(it);
-            LogMembershipList();
+            //it = memberNode->memberList.erase(it);
+            // LogMembershipList();
+            vector<MemberListEntry>::iterator next_it=it, next_next_it=it+1;
+            for (next_it = it; next_next_it != memberNode->memberList.end(); next_it++, next_next_it++) {
+                *next_it = *next_next_it;
+            }
+            memberNode->memberList.resize(memberNode->memberList.size()-1);
+            it--;
             log->logNodeRemove(&(memberNode->addr), &curr_addr);
         }
-        else
-            it++;
     }
     memberNode->heartbeat++;
     onHeartbeat(&memberNode->addr, memberNode->heartbeat);
@@ -325,7 +333,12 @@ void MP1Node::initMemberListTable(Member *memberNode) {
 	memberNode->memberList.clear();
 
     int id = *(int*)(&memberNode->addr.addr);
-    int port = *(short*)(&memberNode->addr.addr[4]);
+    short port = *(short*)(&memberNode->addr.addr[4]);
+
+    // int id;
+    // short port;
+    // memcpy(&id, &memberNode->addr.addr[0], sizeof(int));
+    // memcpy(&port, &memberNode->addr.addr[4], sizeof(short));
 
     MemberListEntry entry = MemberListEntry(id, port);
     entry.settimestamp(par->getcurrtime());
@@ -347,13 +360,13 @@ void MP1Node::printAddress(Address *addr)
 void MP1Node::addMemberToList(Address *addr, int id, short port, long heartbeat)
 {
 
-    size_t msgsize = sizeof(MessageHdr) + sizeof(memberNode->addr.addr) + sizeof(long) + 1;
+    size_t msgsize = sizeof(MessageHdr) + sizeof(memberNode->addr) + sizeof(long) + 1;
     MessageHdr *msg = (MessageHdr *) malloc(msgsize * sizeof(char));
 
     // create JOINREP message: format of data is {struct Address myaddr}
     msg->msgType = JOINREP;
-    memcpy((char *)(msg+1), &memberNode->addr.addr, sizeof(memberNode->addr.addr));
-    memcpy((char *)(msg+1) + 1 + sizeof(memberNode->addr.addr), &memberNode->heartbeat, sizeof(long));
+    memcpy((char *)(msg+1), &memberNode->addr, sizeof(memberNode->addr));
+    memcpy((char *)(msg+1) + 1 + sizeof(memberNode->addr), &memberNode->heartbeat, sizeof(long));
     emulNet->ENsend(&memberNode->addr, addr, (char *)msg, msgsize);
 
     // stringstream ss;
@@ -363,13 +376,15 @@ void MP1Node::addMemberToList(Address *addr, int id, short port, long heartbeat)
 
 }
 
+// bool MP1Node::updateMember()
+
 void MP1Node::onHeartbeat(Address *addr, long heartbeat)
 {
     bool flag = false;
     for(vector<MemberListEntry>::iterator it = memberNode->memberList.begin(); it != memberNode->memberList.end(); it++)
     {
         Address curr_addr = getAddressFromMemberElement(&(*it)); 
-        if(curr_addr.addr == addr->addr)
+        if(curr_addr == *addr)
         {
             flag = true;
             if(it->getheartbeat() < heartbeat)
@@ -382,20 +397,18 @@ void MP1Node::onHeartbeat(Address *addr, long heartbeat)
 
     if(!flag)
     {
-        int id = 0;
-        short port;
-        string address = addr->getAddress();
-        memcpy(&id, &address[0], sizeof(int));
-        memcpy(&port, &addr[5], sizeof(short));
+        int id = *((int*)addr->addr);
+        short port = *((short*)&(addr->addr[4]));
         MemberListEntry entry(id,port,heartbeat,par->getcurrtime());
         memberNode->memberList.push_back(entry);
         log->logNodeAdd(&(memberNode->addr), addr);
+        gossip(addr, heartbeat);
     }
 }
 
 void MP1Node::gossip(Address *updatedNodeAddr, long updatedNodeHeartbeat)
 {
-    int k=3;
+    int k=30;
     double beta = (double) k/ (double) memberNode->memberList.size();
 
     size_t msgsize = sizeof(MessageHdr) + sizeof(updatedNodeAddr->addr) + sizeof(long) + 1;
@@ -409,7 +422,7 @@ void MP1Node::gossip(Address *updatedNodeAddr, long updatedNodeHeartbeat)
     for(vector<MemberListEntry>::iterator it = memberNode->memberList.begin(); it != memberNode->memberList.end(); it++)
     {
         Address dest_addr = getAddressFromMemberElement(&(*it)); 
-        if( (dest_addr.addr == memberNode->addr.addr) || (dest_addr.addr==updatedNodeAddr->addr))
+        if( (dest_addr == memberNode->addr) || (dest_addr==*updatedNodeAddr))
             continue;
 
         if(((double)(rand()%100))/100 < beta)
